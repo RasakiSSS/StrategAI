@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Validates the locale resources in `locales/*.json`.
 //
-// `lib/i18n.ts` makes key *completeness* a compile-time guarantee, but it
-// cannot catch placeholder drift (`{turn}` vs `{turns}`), empty values, or a
-// duplicate key silently overwriting an earlier one. This script covers those,
-// and needs nothing beyond Node itself — no test framework, no dependencies.
+// `lib/i18n.ts` makes *missing* keys a compile error, but TypeScript cannot
+// reject a key that only exists in the translated file, nor catch placeholder
+// drift (`{turn}` vs `{turns}`), empty values, or a duplicate key silently
+// overwriting an earlier one. This script covers those, and needs nothing
+// beyond Node itself — no test framework, no dependencies.
 //
 // Usage: npm run check:i18n
 

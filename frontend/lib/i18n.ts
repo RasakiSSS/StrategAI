@@ -4,8 +4,9 @@
 // (`game.endTurn`-style) so they diff cleanly and stay independent of the
 // components that use them. English is the canonical source of truth: its key
 // set *is* `TranslationKey`, and `zh-CN` is typed as a complete map over that
-// union, so a missing or stray translation fails `npm run typecheck` instead of
-// silently falling back at runtime.
+// union, so a *missing* translation fails `npm run typecheck` instead of
+// silently falling back at runtime. TypeScript cannot reject a key that only
+// exists in the translated file, so `scripts/check-i18n.mjs` reports those.
 //
 // There is no external dependency — the runtime is the handful of pure
 // functions below plus the `useI18n` hook. Locale selection is client-side only
@@ -47,6 +48,9 @@ export type TranslateParams = Record<string, string | number | EnumParam>;
 
 export type TFunction = (key: TranslationKey, params?: TranslateParams) => string;
 
+// A missing key is the compile error above; a *stray* key is structurally
+// allowed by TypeScript for an imported JSON module, so `npm run check:i18n`
+// is what flags it.
 const DICTIONARIES: Record<Locale, Record<TranslationKey, string>> = {
   en,
   "zh-CN": zhCN,

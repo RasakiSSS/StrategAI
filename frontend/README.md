@@ -34,7 +34,7 @@ Runs at `http://localhost:3000`. Without `NEXT_PUBLIC_ASSET_API_URL`, the game r
 ## Testing
 
 ```bash
-npx tsc --noEmit      # type check (also enforces en/zh-CN key parity)
+npx tsc --noEmit      # type check (also catches missing zh-CN keys)
 npm run check:i18n    # locale key/placeholder validation
 npm run build         # production build verification
 ```
@@ -46,7 +46,8 @@ npm run build         # production build verification
 - **Asset fallback** — Every missing generative asset degrades gracefully to built-in colors, glyphs, or initials.
 - **Single stylesheet** — `app/globals.css` (~1250 lines) with design tokens and all UI surfaces.
 - **Player-facing text** — Lives in `locales/*.json`, never inline. `en.json` defines the key
-  union, so a missing `zh-CN` key is a type error. See [`docs/UI_GUIDE.md`](docs/UI_GUIDE.md) §9.
+  union, so a missing `zh-CN` key is a type error; `npm run check:i18n` flags stray keys and
+  placeholder drift. See [`docs/UI_GUIDE.md`](docs/UI_GUIDE.md) §9.
 
 ## Audio Attribution
 

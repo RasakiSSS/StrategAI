@@ -102,11 +102,11 @@ npm run build
 ## Localization
 
 Player-facing text lives in `locales/en.json` (canonical; defines `TranslationKey`) and
-`locales/zh-CN.json`. `en.json` keys are type-checked against `zh-CN.json`, so key parity is
-enforced by `npm run typecheck`; `npm run check:i18n` additionally validates placeholders,
-duplicates, and empty values. Never inline user-visible English in components or CSS — add a key
-to both locale files and render it with `t()` / `tEnum()` from `lib/i18n.ts`. AI prompt strings
-(image descriptions, TTS narration) stay English and are not translated.
+`locales/zh-CN.json`. A **missing** `zh-CN` key is an `npm run typecheck` error; a **stray** key
+(one that exists only in `zh-CN.json`) is reported by `npm run check:i18n`, which also validates
+placeholders, duplicates, and empty values. Never inline user-visible English in components or
+CSS — add a key to both locale files and render it with `t()` / `tEnum()` from `lib/i18n.ts`. AI
+prompt strings (image descriptions, TTS narration) stay English and are not translated.
 
 ## Quick Start
 

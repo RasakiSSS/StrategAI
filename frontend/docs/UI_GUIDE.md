@@ -387,7 +387,7 @@ stance changes, and received messages. The full list lives in `turnEvents.ts`.
 ## 9. Internationalization
 
 The UI ships in English (`en`, default) and Simplified Chinese (`zh-CN`). No
-i18n library is involved: `lib/i18n.ts` is ~180 lines, and every string lives
+i18n library is involved: `lib/i18n.ts` is ~200 lines, and every string lives
 in `locales/*.json` as a **flat, dotted key**.
 
 ```
@@ -425,7 +425,12 @@ textParams: { civ: civName, tech: { ns: "tech", value: tech } },
 
 - **English is the schema.** `TranslationKey` is `keyof typeof en`, and
   `zh-CN.json` is typed as a complete `Record<TranslationKey, string>`, so a
-  missing or stray key fails `npm run typecheck` — no runtime surprises.
+  **missing** key fails `npm run typecheck` — no runtime surprises.
+- **Stray keys are a script check, not a compile check.** TypeScript accepts
+  extra properties on an imported JSON object, so a key that exists only in
+  `zh-CN.json` is reported by `npm run check:i18n` (which also validates
+  placeholder parity, duplicates, and empty values). Run both:
+  `npm run typecheck && npm run check:i18n`.
 - **Fallback chain:** requested locale → English → the raw key. A backend enum
   value with no translation degrades to a humanized form
   (`bronze_working` → `Bronze working`) instead of a blank.
