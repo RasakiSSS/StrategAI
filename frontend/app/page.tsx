@@ -237,7 +237,7 @@ export default function HomePage() {
   const [state, setState] = useState<GameStateDTO | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<UnitDTO | null>(null);
   const [hoveredTile, setHoveredTile] = useState<TileDTO | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingAction>(null);
   const [cityName, setCityName] = useState("");
@@ -401,7 +401,7 @@ export default function HomePage() {
         void generateBaseDawnScene(manifest, next, humanCustomParams);
       }
     } catch (e: unknown) {
-      setError(formatError(e, t));
+      setError(toAppError(e));
       setHasStarted(false);
       setLoadingSplashUrls([]);
     } finally {
@@ -501,7 +501,12 @@ export default function HomePage() {
   useEffect(() => {
     if (!state || introDismissed) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
+      const isActivationKey = e.key === "Enter" || e.key === " ";
+      // Enter/Space belong to the focused control — the language switch, the
+      // replay button, or the CTA all handle their own activation, so the
+      // shortcut must not steal them. Esc always closes the intro.
+      if (isActivationKey && isInteractiveTarget(e.target)) return;
+      if (e.key === "Escape" || isActivationKey) {
         e.preventDefault();
         dismissIntro();
       }
@@ -1115,7 +1120,7 @@ export default function HomePage() {
         setHoveredTile(updatedTile);
       }
     } catch (e: unknown) {
-      setError(formatError(e, t));
+      setError(toAppError(e));
     } finally {
       setBusy(false);
     }
@@ -1153,7 +1158,7 @@ export default function HomePage() {
       // the following End Turn is instant too.
       void prepareNextScene(events, next);
     } catch (e: unknown) {
-      setError(formatError(e, t));
+      setError(toAppError(e));
     } finally {
       // Backend work is done — enable Continue; the user dismisses when ready.
       setTurnResolved(true);
@@ -1215,7 +1220,7 @@ export default function HomePage() {
         setPlacedStructureAssets((current) => ({ ...current, [key]: preloadedUrl }));
       }
     } catch (e: unknown) {
-      setError(formatError(e, t));
+      setError(toAppError(e));
     } finally {
       setBusy(false);
     }
@@ -1232,7 +1237,7 @@ export default function HomePage() {
       activeStance?.truce_active &&
       (messageKind === "declare_war" || messageKind === "threat")
     ) {
-      setError(t("error.truceHostile", { turn: activeStance.truce_until ?? "?" }));
+      setError({ key: "error.truceHostile", params: { turn: activeStance.truce_until ?? "?" } });
       return;
     }
     const text = messageText.trim();
@@ -1252,7 +1257,7 @@ export default function HomePage() {
         const occupant = state.units.find((u) => u.q === q && u.r === r);
         if (occupant && occupant.owner !== selectedUnit.owner) {
           if (!canAttackOwner(state, selectedUnit.owner, occupant.owner)) {
-            setError(t("error.declareWar"));
+            setError({ key: "error.declareWar" });
             return;
           }
           run(() => api.attack(state.id, selectedUnit.id, occupant.id));
@@ -1282,7 +1287,7 @@ export default function HomePage() {
       const here = { q: selectedUnit.q, r: selectedUnit.r };
       if (hexDistance(here, { q: u.q, r: u.r }) === 1) {
         if (!canAttackOwner(state, selectedUnit.owner, u.owner)) {
-          setError(t("error.declareWar"));
+          setError({ key: "error.declareWar" });
           return;
         }
         run(() => api.attack(state.id, selectedUnit.id, u.id));
@@ -1448,7 +1453,7 @@ export default function HomePage() {
             <LocaleSwitch locale={locale} onChange={setLocale} label={t("start.language")} />
           </div>
         </section>
-        {error && <div className="toast">{error}</div>}
+        {error && <div className="toast">{t(error.key, error.params)}</div>}
       </main>
     );
   }
@@ -1480,7 +1485,7 @@ export default function HomePage() {
             </p>
           )}
         </section>
-        {error && <div className="toast">{error}</div>}
+        {error && <div className="toast">{t(error.key, error.params)}</div>}
       </main>
     );
   }
@@ -1545,7 +1550,7 @@ export default function HomePage() {
           <div className="intro-screen__hint">{t("intro.hint")}</div>
           <LocaleSwitch locale={locale} onChange={setLocale} label={t("start.language")} />
         </section>
-        {error && <div className="toast">{error}</div>}
+        {error && <div className="toast">{t(error.key, error.params)}</div>}
       </main>
     );
   }
@@ -2508,7 +2513,7 @@ export default function HomePage() {
                         );
                       }}
                       onClick={() =>
-                        setError(t("error.structureDrop"))
+                        setError({ key: "error.structureDrop" })
                       }
                       disabled={disabled}
                       title={
@@ -2620,7 +2625,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {error && <div className="toast">{error}</div>}
+      {error && <div className="toast">{t(error.key, error.params)}</div>}
     </main>
   );
 }
@@ -2870,23 +2875,30 @@ function relationshipColor(score: number): string {
 }
 
 /**
- * Turns an API or network failure into a localized toast. Validation details
- * come from the backend in English by contract, so they are shown verbatim
- * rather than guessed at.
+ * A pending error toast, held as a translation key + params rather than as
+ * text: the toast then renders in whatever language is current, and an async
+ * request that settles after a language switch cannot bake in a stale one.
  */
-function formatError(e: unknown, t: TFunction): string {
+type AppError = { key: TranslationKey; params?: TranslateParams };
+
+/**
+ * Turns an API or network failure into a locale-independent toast descriptor.
+ * Validation details come from the backend in English by contract, so they are
+ * shown verbatim rather than guessed at.
+ */
+function toAppError(e: unknown): AppError {
   const message = e instanceof Error ? e.message : String(e);
   const httpMatch = /^(\d{3})\b[^:]*:\s*([\s\S]*)$/.exec(message);
   if (httpMatch) {
-    return t("error.requestFailed", {
-      status: httpMatch[1],
-      detail: errorDetail(httpMatch[2]),
-    });
+    return {
+      key: "error.requestFailed",
+      params: { status: httpMatch[1], detail: errorDetail(httpMatch[2]) },
+    };
   }
   if (/failed to fetch|networkerror|load failed/i.test(message)) {
-    return t("error.network");
+    return { key: "error.network" };
   }
-  return t("error.unexpected", { message });
+  return { key: "error.unexpected", params: { message } };
 }
 
 /** FastAPI errors arrive as `{"detail": "..."}`; show just the detail. */
@@ -2901,6 +2913,19 @@ function errorDetail(body: string): string {
     // Not JSON — fall through to the raw body.
   }
   return body.trim();
+}
+
+/**
+ * True when a key event targets a control that owns its own activation keys
+ * (buttons, links, fields), so screen-level shortcuts can stand aside.
+ */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    target.closest(
+      "button, a[href], input, select, textarea, [role='button'], [contenteditable='true']",
+    ) !== null
+  );
 }
 
 function LocaleSwitch({
