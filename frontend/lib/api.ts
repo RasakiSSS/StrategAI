@@ -87,6 +87,15 @@ export type StanceDTO = {
   truce_until: number | null;
 };
 
+export type StancePairDTO = {
+  civ_a_id: number;
+  civ_b_id: number;
+  stance: string;
+  relationship: number;
+  truce_active: boolean;
+  truce_until: number | null;
+};
+
 export type DiplomaticEventDTO = {
   turn: number;
   kind: string;
@@ -129,8 +138,55 @@ export type GameStateDTO = {
   diplomatic_events: DiplomaticEventDTO[];
   standings: StandingDTO[];
   score_threshold: number;
+  spectator_stances: StancePairDTO[];
 };
 
+export type SpectateStatusDTO = {
+  game_id: number;
+  mode: string;
+  status: string;
+  turn: number;
+  current_civ_id: number | null;
+  max_turns: number;
+  winner_civ_id: number | null;
+  victory_kind: string | null;
+  error: string | null;
+  source_labels: Record<string, string>;
+  last_event_id: number;
+};
+
+export type SpectatorEventDTO = {
+  id: number;
+  kind: string;
+  turn: number;
+  civ_id: number | null;
+  civ_name: string | null;
+  source_label: string | null;
+  message: string;
+  created_at: string;
+};
+
+export type SpectateResponseDTO = {
+  state: GameStateDTO;
+  status: SpectateStatusDTO;
+  events: SpectatorEventDTO[];
+};
+
+export type LLMPlayerConfigInput = {
+  model?: string;
+  base_url?: string;
+  api_key?: string;
+  temperature?: number;
+  label?: string;
+};
+
+export type CreateGameOptions = {
+  mode?: "human" | "ai_battle";
+  num_civs?: number;
+  max_turns?: number;
+  llm_players?: LLMPlayerConfigInput[];
+  auto_start?: boolean;
+};
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -160,12 +216,31 @@ async function reqBlob(path: string, init?: RequestInit): Promise<Blob> {
 }
 
 export const api = {
-  createGame: (radius = 5, seed = 0, human_name = "Athens") =>
+  createGame: (
+    radius = 5,
+    seed = 0,
+    human_name = "Athens",
+    options: CreateGameOptions = {},
+  ) =>
     req<GameStateDTO>("/games", {
       method: "POST",
-      body: JSON.stringify({ radius, seed, human_name }),
+      body: JSON.stringify({ radius, seed, human_name, ...options }),
     }),
   getGame: (id: number) => req<GameStateDTO>(`/games/${id}`),
+  getSpectate: (id: number, since?: number) => {
+    const query = since !== undefined ? `?since=${encodeURIComponent(since)}` : "";
+    return req<SpectateResponseDTO>(`/games/${id}/spectate${query}`);
+  },
+  getSpectateStatus: (id: number) =>
+    req<SpectateStatusDTO>(`/games/${id}/status`),
+  runGame: (id: number) =>
+    req<SpectateStatusDTO>(`/games/${id}/run`, { method: "POST" }),
+  pauseGame: (id: number) =>
+    req<SpectateStatusDTO>(`/games/${id}/pause`, { method: "POST" }),
+  resumeGame: (id: number) =>
+    req<SpectateStatusDTO>(`/games/${id}/resume`, { method: "POST" }),
+  stopGame: (id: number) =>
+    req<SpectateStatusDTO>(`/games/${id}/stop`, { method: "POST" }),
   endTurn: (id: number) =>
     req<GameStateDTO>(`/games/${id}/turn`, { method: "POST" }),
   resolveTurn: (id: number) =>

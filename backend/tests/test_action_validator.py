@@ -19,6 +19,7 @@ from app.engine.hex import Hex
 from app.engine.map_generator import generate_map
 from app.engine.models import (
     Civilization,
+    City,
     GameState,
     Unit,
     UnitType,
@@ -84,7 +85,28 @@ def test_valid_move_returns_ok() -> None:
 
 
 @pytest.mark.unit
-def test_move_wrong_owner_rejected() -> None:
+def test_move_into_healthy_enemy_city_rejected() -> None:
+    state = _state_with_units(_warrior(1, 0, Hex(0, 0)))
+    state = replace(
+        state,
+        cities=(City(id=1, owner=1, name="Enemy", location=Hex(1, 0), health=20),),
+    )
+    result = validate(MoveAction(unit_id=1, destination=Hex(1, 0)), state, civ_id=0)
+    assert isinstance(result, ValidationError)
+    assert result.code == "city_not_defeated"
+
+
+@pytest.mark.unit
+def test_move_into_defeated_enemy_city_allowed() -> None:
+    state = _state_with_units(_warrior(1, 0, Hex(0, 0)))
+    state = replace(
+        state,
+        cities=(City(id=1, owner=1, name="Enemy", location=Hex(1, 0), health=0),),
+    )
+    result = validate(MoveAction(unit_id=1, destination=Hex(1, 0)), state, civ_id=0)
+    assert isinstance(result, ValidationOk)
+
+
     state = _state_with_units(_settler(1, 0, Hex(0, 0)))
     state = replace(state, current_civ_idx=1)
     result = validate(MoveAction(unit_id=1, destination=Hex(1, 0)), state, civ_id=1)

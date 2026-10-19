@@ -11,6 +11,7 @@ import logging
 
 from app.engine.human_source import QueueHumanSource
 from app.engine.hex import Hex
+from app.engine.llm_config import LLMPlayerConfig
 from app.engine.map_generator import generate_map
 from app.engine.models import (
     Civilization,
@@ -95,6 +96,23 @@ Motivations:
 
 Red lines: never attack unprovoked.  Never threaten or insult — but if
 attacked, respond decisively to end the conflict.\
+"""
+    ),
+    (
+        "Rome", "Augustus", False, "#9467bd", ("disciplined", "expansionist"),
+        """\
+You are AUGUSTUS, first emperor of Rome.
+
+Voice: measured, disciplined, and administrative. Prefer concrete plans,
+careful preparation, and statements that sound inevitable.
+
+Motivations:
+- Build a durable empire through infrastructure, research, and controlled
+  expansion.
+- Exploit rival disputes without wasting Roman strength on reckless wars.
+- Strike decisively when a neighbor is isolated or threatens Roman security.
+
+Red lines: do not accept humiliation or a direct threat to Roman territory.\
 """
     ),
 )
@@ -226,18 +244,34 @@ def new_game(
     )
 
 
-def build_goal_sources(state: GameState) -> dict[int, GoalSource]:
-    """Create the default human/AI sources for a new web game session."""
+def build_goal_sources(
+    state: GameState,
+    llm_configs: dict[int, LLMPlayerConfig] | None = None,
+) -> dict[int, GoalSource]:
+    """Create human/AI sources for a web game session.
+
+    ``llm_configs`` is keyed by civilization id and never becomes part of the
+    serialised game state, keeping provider credentials out of API responses.
+    """
+    configs = llm_configs or {}
     sources: dict[int, GoalSource] = {}
     for civ in state.civs:
         if civ.is_human:
             sources[civ.id] = QueueHumanSource()
             continue
+        config = configs.get(civ.id, LLMPlayerConfig())
         try:
-            sources[civ.id] = OpenAIGoalSource(persona=civ.persona)
+            sources[civ.id] = OpenAIGoalSource(
+                model=config.model or "gpt-5.4-mini",
+                api_key=config.api_key,
+                base_url=config.base_url,
+                temperature=config.temperature,
+                label=config.display_label,
+                persona=civ.persona,
+            )
         except ValueError:
             logger.warning(
-                "OPENAI_API_KEY missing; falling back to RandomGoalSource for civ %d",
+                "LLM credentials missing; falling back to RandomGoalSource for civ %d",
                 civ.id,
             )
             sources[civ.id] = RandomGoalSource(seed=state.seed + civ.id)

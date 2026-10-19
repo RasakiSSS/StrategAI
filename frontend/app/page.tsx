@@ -1447,6 +1447,9 @@ export default function HomePage() {
           </div>
 
           <div className="start-screen__actions">
+            <a className="button-secondary" href="/spectate/new">
+              {t("spectator.newBattle")}
+            </a>
             <button className="button-primary" onClick={beginGame} disabled={busy}>
               {busy ? t("start.generating") : t("start.begin")}
             </button>

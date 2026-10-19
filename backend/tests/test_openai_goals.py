@@ -340,6 +340,7 @@ def test_openai_source_handles_api_error():
     decisions = source.decide({}, civ_id=0)
     assert decisions.goals == ()
     assert decisions.diplomacy == ()
+    assert source.last_error == "LLM provider request failed"
 
 
 @pytest.mark.unit
@@ -452,3 +453,19 @@ def test_openai_source_requires_api_key():
     with patch.dict("os.environ", env, clear=True):
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             OpenAIGoalSource()
+
+
+@pytest.mark.unit
+def test_openai_source_passes_custom_base_url() -> None:
+    with patch("app.engine.openai_goals.OpenAI") as openai_cls:
+        OpenAIGoalSource(
+            model="custom-model",
+            api_key="secret-key",
+            base_url="https://llm.example/v1/",
+            label="Custom seat",
+        )
+
+    openai_cls.assert_called_once_with(
+        api_key="secret-key",
+        base_url="https://llm.example/v1",
+    )

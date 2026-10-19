@@ -26,6 +26,32 @@ The `python-dotenv` library is used to load a `.env` file at startup.
 | `OPENAI_TTS_MODEL` | No | `gpt-4o-mini-tts` | `app/api/routers/audio.py:27` | OpenAI TTS model for intro narration voiceover. Must be a TTS-capable model. |
 | `OPENAI_TTS_VOICE` | No | `cedar` | `app/api/routers/audio.py:28` | Voice preset for intro narration. Supported voices: `alloy`, `ash`, `cedar`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`. |
 
+### Per-seat AI battle settings
+
+The `POST /games` request can create a fully autonomous battle with
+`mode: "ai_battle"`. The optional `llm_players` array is assigned in order to
+non-human civilization seats and accepts:
+
+| Field | Description |
+|---|---|
+| `model` | Chat-completions model name |
+| `base_url` | Absolute OpenAI-compatible HTTP(S) endpoint |
+| `api_key` | Provider credential for this seat; falls back to `OPENAI_API_KEY` when omitted |
+| `temperature` | Sampling temperature from `0` to `2` |
+| `label` | Safe display label shown to spectators |
+
+Credentials stay in the in-memory game runtime and are never serialized into
+`GameStateOut`, spectator state, or status responses. Do not send them through
+`NEXT_PUBLIC_*` frontend environment variables. The current demo store is
+process-local; production deployments should add authentication, encrypted
+secret storage, and an outbound host allowlist before accepting arbitrary
+`base_url` values.
+
+AI battle lifecycle endpoints are `POST /games/{id}/run`, `/pause`, `/resume`,
+and `/stop`; `GET /games/{id}/status` returns lifecycle state and safe model
+labels; `GET /games/{id}/spectate` returns the omniscient read-only snapshot and
+incremental events.
+
 ### `OPENAI_API_KEY` — Required
 
 ```bash

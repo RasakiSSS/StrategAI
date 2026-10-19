@@ -1,5 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
+from threading import Event
+from unittest.mock import patch
 
 from app.api.store import store
 from app.engine.human_source import QueueHumanSource
@@ -120,6 +122,8 @@ def test_research_flow(client: TestClient):
     assert civ0["researching"] == "agriculture"
 
 
+
+
 def test_found_city_via_api(client: TestClient):
     created = client.post("/games", json={"radius": 4, "seed": 5}).json()
     game_id = created["id"]
@@ -135,3 +139,129 @@ def test_found_city_via_api(client: TestClient):
         body = r.json()
         assert len(body["cities"]) == 1
         assert body["cities"][0]["name"] == "Capital"
+
+
+
+def test_create_ai_battle_uses_per_seat_provider_config(client: TestClient):
+    with patch("app.engine.openai_goals.OpenAI"):
+        r = client.post(
+            "/games",
+            json={
+                "radius": 4,
+                "seed": 7,
+                "mode": "ai_battle",
+                "num_civs": 3,
+                "max_turns": 5,
+                "auto_start": False,
+                "llm_players": [
+                    {
+                        "label": "DeepSeek seat",
+                        "model": "deepseek-chat",
+                        "base_url": "https://api.deepseek.com",
+                        "api_key": "secret-one",
+                    },
+                    {
+                        "label": "GLM seat",
+                        "model": "glm-5",
+                        "base_url": "https://llm.example/v1/",
+                        "api_key": "secret-two",
+                    },
+                    {
+                        "label": "Third seat",
+                        "model": "custom-model",
+                        "base_url": "https://llm.example/v1",
+                        "api_key": "secret-three",
+                    },
+                ],
+            },
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["civs"]) == 3
+    assert all(not civ["is_human"] for civ in body["civs"])
+    assert "secret-one" not in r.text
+    assert "secret-two" not in r.text
+    assert "secret-three" not in r.text
+
+    status = client.get(f"/games/{body['id']}/status")
+    assert status.status_code == 200
+    assert status.json()["status"] == "ready"
+    assert status.json()["source_labels"] == {
+        "0": "DeepSeek seat",
+        "1": "GLM seat",
+        "2": "Third seat",
+    }
+
+    spectator = client.get(f"/games/{body['id']}/spectate")
+    assert spectator.status_code == 200
+    spectator_body = spectator.json()
+    assert len(spectator_body["state"]["civs"]) == 3
+    assert len(spectator_body["state"]["spectator_stances"]) == 3
+
+
+def test_ai_battle_runs_in_background_without_human(client: TestClient, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    created = client.post(
+        "/games",
+        json={
+            "radius": 3,
+            "seed": 11,
+            "mode": "ai_battle",
+            "num_civs": 2,
+            "max_turns": 1,
+            "auto_start": False,
+        },
+    ).json()
+    game_id = created["id"]
+    started = client.post(f"/games/{game_id}/run")
+    assert started.status_code == 200
+
+    import time
+
+    final_status = None
+    for _ in range(50):
+        final_status = client.get(f"/games/{game_id}/status").json()
+        if final_status["status"] in {"finished", "error", "stopped"}:
+            break
+        time.sleep(0.02)
+    assert final_status is not None
+    assert final_status["status"] == "finished"
+    spectator = client.get(f"/games/{game_id}/spectate").json()
+    assert spectator["events"]
+    assert spectator["state"]["turn"] >= 2
+
+
+def test_ai_battle_http_controls_pause_resume_stop(client: TestClient):
+    started = Event()
+    release = Event()
+    done = Event()
+
+    def blocking_runner(game_id: int) -> None:
+        started.set()
+        runtime = store.get_runtime(game_id)
+        if runtime.wait_until_running():
+            release.wait(timeout=1)
+        runtime.finish(status="stopped")
+        done.set()
+
+    with patch("app.api.simulation._run_game", blocking_runner):
+        created = client.post(
+            "/games",
+            json={
+                "mode": "ai_battle",
+                "num_civs": 2,
+                "radius": 3,
+                "seed": 12,
+                "auto_start": False,
+            },
+        ).json()
+        game_id = created["id"]
+        assert client.post(f"/games/{game_id}/run").status_code == 200
+        assert started.wait(timeout=1)
+        assert client.post(f"/games/{game_id}/pause").json()["status"] == "paused"
+        assert client.post(f"/games/{game_id}/resume").json()["status"] == "running"
+        assert client.post(f"/games/{game_id}/stop").json()["status"] == "stopping"
+        release.set()
+        assert done.wait(timeout=1)
+
+    assert client.get(f"/games/{game_id}/status").json()["status"] == "stopped"

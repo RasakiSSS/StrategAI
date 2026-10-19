@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, SecretStr
 
 from app.engine.diplomacy import (
     DiplomaticEvent,
@@ -121,6 +123,15 @@ class StanceOut(BaseModel):
     truce_until: int | None = None
 
 
+class StancePairOut(BaseModel):
+    civ_a_id: int
+    civ_b_id: int
+    stance: str
+    relationship: int = 0
+    truce_active: bool = False
+    truce_until: int | None = None
+
+
 class DiplomaticEventOut(BaseModel):
     turn: int
     kind: str
@@ -171,6 +182,7 @@ class GameStateOut(BaseModel):
     messages: list[MessageOut]
     inbox: list[MessageOut]
     stances: list[StanceOut]
+    spectator_stances: list[StancePairOut] = Field(default_factory=list)
     visible_tile_keys: list[str] = Field(default_factory=list)
     explored_tile_keys: list[str] = Field(default_factory=list)
     tile_owner: list[TileOwnerOut] = Field(default_factory=list)
@@ -292,7 +304,9 @@ def message_to_out(message: DiplomaticMessage) -> MessageOut:
 
 def state_to_out(game_id: int, state: GameState) -> GameStateOut:
     human_civ = next((c for c in state.civs if c.is_human), None)
-    known_ids = sorted(met_civs(state, human_civ.id) - {human_civ.id}) if human_civ is not None else []
+    if human_civ is None:
+        return state_to_spectator_out(game_id, state)
+    known_ids = sorted(met_civs(state, human_civ.id) - {human_civ.id})
     visible = visible_tiles(state, human_civ.id) if human_civ is not None else frozenset()
     # Explored = ever-seen ∪ currently-visible. Lazy union covers tiles
     # revealed mid-turn before end_turn accumulates them.
@@ -400,6 +414,7 @@ def state_to_out(game_id: int, state: GameState) -> GameStateOut:
         messages=messages,
         inbox=inbox,
         stances=stances,
+        spectator_stances=[],
         visible_tile_keys=visible_keys,
         explored_tile_keys=explored_keys,
         tile_owner=tile_owner_list,
@@ -409,10 +424,123 @@ def state_to_out(game_id: int, state: GameState) -> GameStateOut:
     )
 
 
+
+def state_to_spectator_out(game_id: int, state: GameState) -> GameStateOut:
+    """Serialize the complete game state for an authorized read-only spectator."""
+    all_coords = frozenset(state.map.tiles)
+    civ_ids = {civ.id for civ in state.civs}
+    spectator_stances: list[StancePairOut] = []
+    civs_sorted = sorted(state.civs, key=lambda civ: civ.id)
+    for index, civ_a in enumerate(civs_sorted):
+        for civ_b in civs_sorted[index + 1:]:
+            key = tuple(sorted((civ_a.id, civ_b.id)))
+            spectator_stances.append(
+                StancePairOut(
+                    civ_a_id=civ_a.id,
+                    civ_b_id=civ_b.id,
+                    stance=state.stance_between(civ_a.id, civ_b.id).value,
+                    relationship=relationship_between(state, civ_a.id, civ_b.id),
+                    truce_active=truce_active(state, civ_a.id, civ_b.id),
+                    truce_until=state.truces.get(key),
+                )
+            )
+
+    return GameStateOut(
+        id=game_id,
+        turn=state.turn,
+        current_civ_id=state.current_civ().id,
+        map_radius=state.map.radius,
+        tiles=[tile_to_out(tile) for tile in state.map.tiles.values()],
+        civs=[civ_to_out(civ, state) for civ in state.civs],
+        civ_roster=[
+            CivRosterEntry(
+                id=civ.id,
+                name=civ.name,
+                leader_name=civ.leader_name,
+                is_human=civ.is_human,
+            )
+            for civ in state.civs
+        ],
+        cities=[city_to_out(city) for city in state.cities],
+        structures=[structure_to_out(structure) for structure in state.structures],
+        units=[unit_to_out(unit) for unit in state.units],
+        known_civ_ids=sorted(civ_ids),
+        messages=[message_to_out(message) for message in state.messages],
+        inbox=[],
+        stances=[],
+        spectator_stances=spectator_stances,
+        visible_tile_keys=sorted(f"{coord.q},{coord.r}" for coord in all_coords),
+        explored_tile_keys=sorted(f"{coord.q},{coord.r}" for coord in all_coords),
+        tile_owner=sorted(
+            (
+                TileOwnerOut(q=coord.q, r=coord.r, city_id=city_id)
+                for coord, city_id in state.tile_owner.items()
+            ),
+            key=lambda item: (item.q, item.r),
+        ),
+        diplomatic_events=[
+            diplomatic_event_to_out(event)
+            for event in state.diplomatic_events[-20:]
+        ],
+        standings=sorted(
+            (
+                StandingOut(civ_id=civ.id, name=civ.name, score=civ_score(state, civ))
+                for civ in state.civs
+            ),
+            key=lambda item: (-item.score, item.civ_id),
+        ),
+        score_threshold=SCORE_THRESHOLD,
+    )
+
+
+class LLMPlayerConfigRequest(BaseModel):
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    base_url: str | None = Field(default=None, max_length=500)
+    api_key: SecretStr | None = None
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    label: str | None = Field(default=None, min_length=1, max_length=80)
+
+
 class CreateGameRequest(BaseModel):
     radius: int = Field(default=8, ge=1, le=20)
     seed: int = 0
     human_name: str = Field(default="Athens", min_length=1, max_length=40)
+    mode: Literal["human", "ai_battle"] = "human"
+    num_civs: int = Field(default=4, ge=2, le=4)
+    max_turns: int = Field(default=50, ge=1, le=1000)
+    llm_players: list[LLMPlayerConfigRequest] = Field(default_factory=list, max_length=4)
+    auto_start: bool = True
+
+
+class GameStatusOut(BaseModel):
+    game_id: int
+    mode: str
+    status: str
+    turn: int
+    current_civ_id: int | None = None
+    max_turns: int
+    winner_civ_id: int | None = None
+    victory_kind: str | None = None
+    error: str | None = None
+    source_labels: dict[str, str] = Field(default_factory=dict)
+    last_event_id: int = 0
+
+
+class SimulationEventOut(BaseModel):
+    id: int
+    kind: str
+    turn: int
+    civ_id: int | None = None
+    civ_name: str | None = None
+    source_label: str | None = None
+    message: str
+    created_at: str
+
+
+class SpectatorResponse(BaseModel):
+    state: GameStateOut
+    status: GameStatusOut
+    events: list[SimulationEventOut] = Field(default_factory=list)
 
 
 class IntroNarrationRequest(BaseModel):

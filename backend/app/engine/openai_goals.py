@@ -470,24 +470,50 @@ class OpenAIGoalSource:
         self,
         model: str = "gpt-5.4-mini",
         api_key: str | None = None,
+        base_url: str | None = None,
         temperature: float = 0.7,
         persona: str | None = None,
         memory_turns: int = _MEMORY_TURNS,
+        label: str | None = None,
     ) -> None:
         key = api_key or os.environ.get("OPENAI_API_KEY")
         if not key:
             raise ValueError(
                 "OPENAI_API_KEY must be set in the environment or passed explicitly"
             )
-        self._client = OpenAI(api_key=key)
+        client_kwargs: dict[str, Any] = {"api_key": key}
+        if base_url:
+            client_kwargs["base_url"] = base_url.rstrip("/")
+        self._client = OpenAI(**client_kwargs)
         self._model = model
+        self._base_url = base_url.rstrip("/") if base_url else None
+        self._label = label or model
         self._temperature = temperature
         self._system_prompt = build_system_prompt(persona)
         self._memory_turns = memory_turns
         self._intent_log: list[dict[str, Any]] = []
         self._message_log: list[dict[str, Any]] = []
         self._last_seen_message_turn: int = -1
+        self._last_error: str | None = None
         self._state: GameState | None = None
+
+    @property
+    def public_label(self) -> str:
+        """Safe model label for status and spectator views; never includes the key."""
+        return self._label
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def last_error(self) -> str | None:
+        """Safe diagnostic for the current turn; never contains provider details."""
+        return self._last_error
+
+    @property
+    def base_url(self) -> str | None:
+        return self._base_url
 
     def bind_state(self, state: GameState) -> None:
         """Playthrough loop calls this each turn so resolve_intents has fresh state."""
@@ -513,6 +539,7 @@ class OpenAIGoalSource:
             del self._message_log[: len(self._message_log) - _MEMORY_ACTIONS]
 
     def decide(self, view: dict, civ_id: int) -> Decisions:
+        self._last_error = None
         self._ingest_inbox(view)
 
         current_turn = view.get("turn", 0)
@@ -549,13 +576,14 @@ class OpenAIGoalSource:
 
         try:
             response = self._client.chat.completions.create(**request_kwargs)
-        except Exception as exc:
-            logger.warning("OpenAI API call failed for civ %d: %s", civ_id, exc)
-            logger.debug("OpenAI API failure details for civ %d", civ_id, exc_info=True)
+        except Exception:
+            self._last_error = "LLM provider request failed"
+            logger.warning("OpenAI API call failed for civ %d", civ_id)
             return Decisions()
 
         message = response.choices[0].message
         if not message.tool_calls:
+            self._last_error = "LLM provider returned no tool call"
             logger.info("LLM returned no tool calls for civ %d", civ_id)
             return Decisions()
 
@@ -565,7 +593,8 @@ class OpenAIGoalSource:
             try:
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
-                logger.warning("Invalid JSON in tool call: %s", tc.function.arguments)
+                self._last_error = "LLM provider returned invalid tool arguments"
+                logger.warning("Invalid JSON in tool call for civ %d", civ_id)
                 continue
             parsed = _parse_tool_call(tc.function.name, args)
             if parsed is None:

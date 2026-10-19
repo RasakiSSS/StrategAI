@@ -136,6 +136,15 @@ def _validate_move(state: GameState, civ_id: int, action: MoveAction) -> Validat
             return ValidationError(
                 f"destination {action.destination} is occupied", "occupied"
             )
+    enemy_city = next(
+        (city for city in state.cities if city.location == action.destination),
+        None,
+    )
+    if enemy_city is not None and enemy_city.owner != civ_id and enemy_city.health > 0:
+        return ValidationError(
+            "enemy city must be reduced to 0 health before capture",
+            "city_not_defeated",
+        )
     return ValidationOk(action)
 
 
